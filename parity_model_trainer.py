@@ -7,7 +7,7 @@ import cv2
 import pickle
 from encoder import encoder
 
-k = 2
+k = 4
 img_size = 150
 
 base_dir = "cats_and_dogs_filtered"
@@ -67,7 +67,7 @@ def data_generator(cats_dir: str, dogs_dir: str, batch_size):
                     np.random.choice(dogs_list, dog_num),
                 ]
             )
-            # np.random.shuffle(data_list)
+            np.random.shuffle(data_list)
             x = encoder.encoder(data_list, 0)
             y = np.eye(k + 1, k + 1)[dog_num]
             x_data.append(x)
@@ -155,9 +155,7 @@ history = model.fit(
     callbacks=[reduce_lr, early_stopping],
 )
 
-model.save(os.path.join("models", "parity_model_k" + str(k) + ".h5"))
+model.save(os.path.join("models", f"parity_model_ks{k}.h5"))
 
-with open(
-    os.path.join("logs", "parity_model_history_k" + str(k) + ".pck"), "wb"
-) as file:
+with open(os.path.join("logs", f"parity_model_history_ks{k}.pck"), "wb") as file:
     pickle.dump(history.history, file)
