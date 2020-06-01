@@ -5,15 +5,14 @@ from PIL import Image
 from glob import glob
 from encoder import encoder
 
-k = 4
-img_size = 150
-epoches = 500
-err_rate = 0.1
+err_rates = []
+for i in range(10):
+    err_rates.append((i + 1) * 0.01)
+# err_rates = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1]
+
+epoches = 1000
 
 base_model = tf.keras.models.load_model(os.path.join("models", "base_model.h5"))
-parity_model = tf.keras.models.load_model(
-    os.path.join("models", f"parity_model_k{k}.h5")
-)
 
 validation_dir = "cats_and_dogs_filtered/validation/"
 cats_dir = os.path.join(validation_dir, "cats")
@@ -37,8 +36,8 @@ def get_xs_ys(data_list, cats_num):
     ys_tmp = [0] * cats_num
     ys_tmp.extend([1] * (k - cats_num))
 
-    # ords = np.arange(k)
-    ords = [x for x in range(k)]
+    ords = np.arange(k)
+    # ords = [x for x in range(k)]
     xs = []
     ys = []
     for i in ords:
@@ -77,15 +76,16 @@ def get_fp(parity):
 
 # get outputs of queries with the base model and the parity model
 # and simulate errors
-def query(ys_hat, parity_query):
-    fp = get_fp(parity_query)
+def query(ys_hat, parity_query,err_rate):
+    fp = -1
 
     # An error occurs with the probability of err_rate
-    if np.random.randint(0, 101) <= err_rate * 100:
+    if np.random.randint(1, 1001) <= err_rate * 1000:
         i = np.random.randint(0, k + 1)
         if i != k:
             # An error occurs among the k outputs of Xs rather than the parity query
             ys_hat[i] = -1
+            fp = get_fp(parity_query)
 
     return ys_hat, fp
 
@@ -107,60 +107,89 @@ def update_paras(ys, ys_hat, ys_hat_hat, err_id, corrs, errs, base_true, parity_
 
 
 # calculate Aa, Ad and Ao
-def cal_acc(corrs, errs, base_true, parity_true):
+def cal_acc(corrs, errs, base_true, parity_true, err_rate):
+    if errs==0:
+        errs=1
     Aa = base_true / corrs
     Ad = parity_true / errs
     Ao = err_rate * Ad + (1 - err_rate) * Aa
     return Aa, Ad, Ao
 
 
-# record the parameters to calculate the accuary
-corrs = 0
-errs = 0
-base_true = 0
-parity_true = 0
+def write_log(s, show=False, end="\n", file="logs/aa&ao1.log"):
+    with open(file, "a") as f:
+        f.write(s + end)
+    if show:
+        print(s)
 
-for _ in range(epoches):
-    cats_num = np.random.randint(0, k + 1)
-    dogs_num = k - cats_num
-    data_list = np.hstack(
-        [np.random.choice(cats_list, cats_num), np.random.choice(dogs_list, dogs_num),]
-    )
-    # xs: original images
-    # ys: true labels
-    # ys_hat: predicition with base model
-    # ys_hat_hat: predicition with parity model
-    xs, ys = get_xs_ys(data_list, cats_num)
-    parity_query = encoder.encoder(data_list, 0)
-    ys_hat = get_ys_hat(xs)
 
-    ys_hat_hat, fp = query(ys_hat, parity_query)
-
-    # print(ys, end=" , ")
-    # print(ys_hat, end=" , ")
-    # print(ys_hat_hat)
-
-    err_id = -1
-    for i in range(k):
-        if ys_hat[i] == -1:
-            err_id = i
-
-    if err_id != -1:
-        # an error does occur and reconstruct the result with fp
-        y_err = fp
-        for y in ys_hat:
-            if y == 1:
-                y_err = y_err - 1
-        ys_hat[err_id] = y_err
-
-    corrs, errs, base_true, parity_true = update_paras(
-        ys, ys_hat, ys_hat_hat, err_id, corrs, errs, base_true, parity_true
+for k in range(2, 5):
+    parity_model = tf.keras.models.load_model(
+        os.path.join("models", f"parity_model_ks{k}.h5")
     )
 
-# Aa: the accuary when the unavailability does not occur
-# Ad: the accuary when the unavailability does occur
-# Ao: the overall accuary
-# Ao = err_rate *
-print(corrs, errs, base_true, parity_true, sep=" , ")
-Aa, Ad, Ao = cal_acc(corrs, errs, base_true, parity_true)
-print(Aa, Ad, Ao)
+    # Aos = []
+    # Aas = []
+    for err_rate in err_rates:
+        # record the parameters to calculate the accuary
+        corrs = 0
+        errs = 0
+        base_true = 0
+        parity_true = 0
+
+        for _ in range(epoches):
+            cats_num = np.random.randint(0, k + 1)
+            dogs_num = k - cats_num
+            data_list = np.hstack(
+                [
+                    np.random.choice(cats_list, cats_num),
+                    np.random.choice(dogs_list, dogs_num),
+                ]
+            )
+            # xs: original images
+            # ys: true labels
+            # ys_hat: predicition with base model
+            # ys_hat_hat: predicition with parity model
+            xs, ys = get_xs_ys(data_list, cats_num)
+            parity_query = encoder.encoder(data_list, 0)
+            ys_hat = get_ys_hat(xs)
+
+            ys_hat_hat, fp = query(ys_hat, parity_query,err_rate)
+
+            # print(ys, end=" , ")
+            # print(ys_hat, end=" , ")
+            # print(ys_hat_hat)
+
+            err_id = -1
+            for i in range(k):
+                if ys_hat[i] == -1:
+                    err_id = i
+
+            if err_id != -1:
+                # an error does occur and reconstruct the result with fp
+                y_err = fp
+                for y in ys_hat:
+                    if y == 1:
+                        y_err = y_err - 1
+                ys_hat_hat[err_id] = y_err
+
+            corrs, errs, base_true, parity_true = update_paras(
+                ys, ys_hat, ys_hat_hat, err_id, corrs, errs, base_true, parity_true,
+            )
+
+        # Aa: the accuary when the unavailability does not occur
+        # Ad: the accuary when the unavailability does occur
+        # Ao: the overall accuary
+        # Ao = err_rate *
+        # print(corrs, errs, base_true, parity_true, sep=" , ")
+        Aa, Ad, Ao = cal_acc(corrs, errs, base_true, parity_true, err_rate)
+        # Aas.append(Aa)
+        # Aos.append(Ao)
+        # print((1-err_rate)*Aa)
+        write_log(
+            "k: %d err_rate: %.3f Aa: %.2f Ad: %.2f Ao: %.2f"
+            % (k, err_rate, Aa, Ad, Aa*(1-err_rate)+Ad*err_rate),
+            True,
+        )
+    # Aass.append(Aas)
+    # Aoss.append(Aos)
